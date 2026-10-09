@@ -1,0 +1,30 @@
+# Input data stays local -- PDFs are uploaded through the UI or read from data/
+data/
+*.pdf
+*.zip
+
+# Generated outputs
+backend/local_results/
+backend/outputs/
+backend/work/
+backend/plan_set_test_out/
+*.png
+!frontend/public/*.png
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+infraenv*/
+.env
+
+# Node
+node_modules/
+frontend/dist/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
