@@ -104,9 +104,10 @@ class CrossSectionSplitter:
         station_labels = []
         for y, x, txt, sz in spans:
             if x > right_x and sz > 8.0:
-                m = re.match(r"^(\d+)\+(\d{2})$", txt.strip())
+                # "42+50", and newer GDOT sheets' "42+50.00"
+                m = re.match(r"^(\d+)\+(\d{2}(?:\.\d+)?)$", txt.strip())
                 if m:
-                    sta_ft = int(m.group(1)) * 100 + int(m.group(2))
+                    sta_ft = int(m.group(1)) * 100 + float(m.group(2))
                     station_labels.append((y, txt.strip(), sta_ft))
 
         if not station_labels:

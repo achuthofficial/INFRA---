@@ -7,6 +7,7 @@ import RoadCard from './components/RoadCard';
 import ResultCard from './components/ResultCard';
 import VolumeSummaryTable from './components/VolumeSummaryTable';
 import TickRule from './components/TickRule';
+import AccuracyView from './components/AccuracyView';
 import { checkHealth, fetchPresets, processPdf, processPlanSet } from './api';
 import { plural } from './lib/format';
 
@@ -109,6 +110,7 @@ export default function App() {
   const [error, setError] = useState(null);
   const [isRunning, setIsRunning] = useState(false);
   const [fileName, setFileName] = useState(null);
+  const [view, setView] = useState('run');
 
   useEffect(() => {
     checkHealth().then((h) => setDepsOk(h.ok)).catch(() => setDepsOk(false));
@@ -121,12 +123,15 @@ export default function App() {
   }
 
   function handleModeChange(next) {
-    if (next === mode || isRunning) return;
+    if (isRunning) return;
+    setView('run');
+    if (next === mode) return;
     setMode(next);
     reset();
   }
 
   async function handleSubmit({ file, pages, preset }) {
+    setView('run');
     setIsRunning(true);
     setError(null);
     setFileName(file.name);
@@ -159,38 +164,48 @@ export default function App() {
       <main className="canvas">
         <TickRule count={48} labelEvery={8} />
         <header className="topbar">
-          <p className="crumbs">
-            <span>Workspace</span>
-            <span aria-hidden="true">/</span>
-            <span className="crumb-current">{MODE_NAME[mode]}</span>
-            {(showResult || isRunning) && fileName && (
-              <>
-                <span aria-hidden="true">/</span>
-                <span className="crumb-file" title={fileName}>{fileName}</span>
-              </>
-            )}
-          </p>
-          {(showResult || error) && (
+          <nav className="view-switch" aria-label="View">
+            <button aria-pressed={view === 'run'} onClick={() => setView('run')}>Run</button>
+            <button aria-pressed={view === 'accuracy'} onClick={() => setView('accuracy')}>Accuracy</button>
+          </nav>
+          {view === 'run' ? (
+            <p className="crumbs">
+              <span className="crumb-current">{MODE_NAME[mode]}</span>
+              {(showResult || isRunning) && fileName && (
+                <>
+                  <span aria-hidden="true">/</span>
+                  <span className="crumb-file" title={fileName}>{fileName}</span>
+                </>
+              )}
+            </p>
+          ) : (
+            <p className="crumbs"><span className="crumb-current">Scored against hand-coloured takeoffs</span></p>
+          )}
+          {view === 'run' && (showResult || error) && (
             <button className="btn-ghost" onClick={reset}>New run</button>
           )}
         </header>
 
         <div className="canvas-inner">
-          {!result && !isRunning && !error && <EmptyState mode={mode} />}
+          {view === 'accuracy' ? <AccuracyView /> : (
+            <>
+              {!result && !isRunning && !error && <EmptyState mode={mode} />}
 
-          {isRunning && <LoadingState mode={mode} fileName={fileName} />}
+              {isRunning && <LoadingState mode={mode} fileName={fileName} />}
 
-          {error && !isRunning && (
-            <section className="error" role="alert">
-              <p className="eyebrow eyebrow-cut">Run failed</p>
-              <h2 className="hero-title">That drawing couldn&apos;t be read.</h2>
-              <p className="error-detail">{error}</p>
-              <p className="hero-body">Check the input type matches the PDF (vector plan set vs. scanned sheets), and for scanned sheets that the page numbers exist.</p>
-            </section>
+              {error && !isRunning && (
+                <section className="error" role="alert">
+                  <p className="eyebrow eyebrow-cut">Run failed</p>
+                  <h2 className="hero-title">That drawing couldn&apos;t be read.</h2>
+                  <p className="error-detail">{error}</p>
+                  <p className="hero-body">Check the input type matches the PDF (vector plan set vs. scanned sheets), and for scanned sheets that the page numbers exist.</p>
+                </section>
+              )}
+
+              {showResult && mode === 'planSet' && <PlanSetResults result={result} />}
+              {showResult && mode === 'sheets' && <SheetResults result={result} />}
+            </>
           )}
-
-          {showResult && mode === 'planSet' && <PlanSetResults result={result} />}
-          {showResult && mode === 'sheets' && <SheetResults result={result} />}
         </div>
       </main>
     </div>

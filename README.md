@@ -91,6 +91,27 @@ python scripts/check_pdf_content_type.py ../data/plan.pdf --page 96
 | `pipeline/volume.py` | Average-end-area volume per road (cy). |
 | `pipeline/plan_set_run.py` | Plan-set orchestration (`process_plan_set`). |
 
+## Accuracy against hand-labeled takeoffs
+
+`backend/scripts/evaluate_labels.py` scores the plan-set pipeline against the
+hand-coloured takeoffs (see *Labeled data* below) and the results are shown on
+the **Accuracy** page of the UI.
+
+For each project it runs the app's own plan-set code on the clean vector PDF,
+extracts the green (fill) / red (cut) colouring from the scanned takeoff,
+aligns the two pages automatically, and compares every cross-section:
+fill/cut area (ft², using the true scale read from the sheet's axis numbers),
+overlap (IoU), average-end-area volume per road, and whether the app read the
+sheet's scale correctly.
+
+```bash
+cd backend
+python scripts/evaluate_labels.py --data ../data/EARTHWORK
+```
+
+It writes `frontend/src/data/accuracy.json` and a few example comparison
+images to `frontend/public/accuracy/`; rebuild/reload the frontend to see them.
+
 ## Input data
 
 Input PDFs are **not** in the repo (many are 25–127 MB, above GitHub's limits).
