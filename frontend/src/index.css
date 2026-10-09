@@ -1,4 +1,7 @@
-@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+/* Anthropic Sans is Anthropic's in-house typeface and isn't distributed as a
+   web font. It is listed first so machines that have it installed use it;
+   everyone else gets Inter, a close free match. */
+@import url('https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 :root {
   /* -- ink: the control rail and all type on paper -- */
@@ -35,8 +38,8 @@
   --warn: #9a6400;
   --warn-soft: #fbf0d9;
 
-  --font-display: 'Instrument Serif', 'Times New Roman', serif;
-  --font-body: 'Instrument Sans', system-ui, sans-serif;
+  --font-display: 'Anthropic Sans', 'Inter', system-ui, sans-serif;
+  --font-body: 'Anthropic Sans', 'Inter', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
 
   --radius-sm: 6px;
@@ -61,6 +64,7 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  font-feature-settings: 'cv11', 'ss01';
 }
 
 button, input, select {
