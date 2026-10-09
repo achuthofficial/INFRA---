@@ -1,0 +1,65 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+:root {
+  /* -- palette: a drafting table, not a dashboard -- */
+  --ink-900: #0f1e27;      /* deep blueprint navy, page background */
+  --ink-800: #16242e;      /* card ink / body text on vellum */
+  --ink-700: #24333d;      /* rail surfaces */
+  --ink-600: #33454f;      /* borders on dark */
+
+  --vellum-100: #eef1ee;   /* main content backdrop */
+  --vellum-050: #f7f8f5;   /* card surface */
+  --vellum-line: #cfd6ce;  /* faint grid-paper rule */
+  --vellum-muted: #7c877f; /* muted text on vellum surfaces */
+  --vellum-muted-2: #5b6a63;
+
+  --paper-text: #f3efe4;   /* warm text on dark ink */
+  --paper-text-dim: #b9c3c2;
+
+  --brass-500: #c98a3d;    /* instrument brass -- the one accent color */
+  --brass-600: #a86f2c;
+  --brass-100: #f4e3c9;
+
+  --fill-green: #2e9e4f;   /* matches the pipeline's own overlay colour */
+  --fill-green-bg: #e3f3e6;
+  --cut-red: #c93b3b;      /* matches the pipeline's own overlay colour */
+  --cut-red-bg: #fbe9e9;
+  --warn-amber: #b8791f;
+  --warn-amber-bg: #f8ecd8;
+
+  --font-display: 'Space Grotesk', sans-serif;
+  --font-body: 'IBM Plex Sans', sans-serif;
+  --font-mono: 'IBM Plex Mono', monospace;
+
+  --radius: 6px;
+  --radius-lg: 10px;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--ink-900);
+  color: var(--paper-text);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+button, input, select {
+  font-family: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--brass-500);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+}
