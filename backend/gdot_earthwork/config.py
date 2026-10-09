@@ -7,7 +7,7 @@ it only describes *how* the pipeline should behave, so a caller (CLI,
 background job, future API handler) can override per-run without editing
 source.
 
-If a new drawing series (e.g. "23 series") turns out to need different
+If another drawing series turns out to need different
 grid pitch, ink threshold, or gutter geometry, that difference should be
 expressed as a new Config instance / preset here -- not a new code path
 inside the pipeline modules.
@@ -63,7 +63,6 @@ class PipelineConfig:
 # to differ from the default (validated originally against 19-series sheets).
 PRESETS: dict[str, PipelineConfig] = {
     "19series": PipelineConfig(),
-    # "23series": PipelineConfig(elev_label_gutter=..., ink_thresh=...),  # TODO: validate
 }
 
 

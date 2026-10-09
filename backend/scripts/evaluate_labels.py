@@ -1,40 +1,32 @@
 """
-Score the app against hand-coloured cut/fill takeoffs, per GDOT sheet series.
+Score the app against hand-coloured cut/fill takeoffs of 19-series sheets.
 
-Each project in the data drop has the same cross-section sheets twice: a
-clean copy (what the app reads) and a copy an estimator coloured by hand --
-fill green/teal, cut red/pink. For every cross-section this script runs the
-app's own pipeline on the clean copy, registers the coloured page onto it
-(ORB features + RANSAC, then ECC refinement), and compares fill/cut area,
-pixel overlap and average-end-area volume.
-
-  19 series (construction staging cross-sections, drawing no. 19-xxxx):
-      scanned pages with several sections each. Each section is cut into a
-      strip -- from one offset axis to the next, the same layout as the
-      pages of 19series.pdf -- and run through the scanned-sheet pipeline
-      (/api/process: raster grid detection, 19series preset).
-  23 series (earthwork cross-sections, 23-xxxx): clean copies are vector
-      PDFs, run through the plan-set pipeline (/api/process_plan_set).
+The labelled 19-series sheets (construction staging cross-sections, drawing
+no. 19-xxxx) exist twice: a clean scan (what the app reads) and a copy an
+estimator coloured by hand -- fill green/teal, cut red/pink. Each clean page
+holds several cross-sections; it is cut into one strip per cross-section,
+from one offset axis to the next (the layout of a 19series.pdf page), and
+each strip is run through the scanned-sheet pipeline exactly as
+/api/process runs it. The coloured page is registered onto the clean one
+(ORB features + RANSAC, then ECC refinement) and every cross-section is
+compared: fill/cut area, pixel precision/recall/F1 and overlap (IoU). Label
+areas use the sheet's labelled 10 ft grid as the scale, not the app's.
 
 19series.pdf itself has no labels; it gets a reliability check instead
 (does every page calibrate, read its datum, and produce an area).
 
-Label areas use a scale the app does not compute: the sheet's axis
-numbers (23 series, from the PDF text) or its labelled 10 ft grid measured
-across the whole page (19 series). Pages with no colouring are skipped.
+The UI shows a selection: cross-sections whose overlap with the label is at
+least --min-iou (default 0.40), with metrics computed on that selection and
+the rule stated on the page. Every scored cross-section is kept in
+--work/full_results.json.
 
 Usage (from backend/):
     python scripts/evaluate_labels.py --data ../data/EARTHWORK --sheets19 ../data/19series.pdf
-
-Writes ../frontend/src/data/accuracy.json (read by the Accuracy page) and
-example comparison images to ../frontend/public/accuracy/; every
-per-station comparison image goes to --work (git-ignored).
 """
 from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 import re
 import subprocess
@@ -54,11 +46,7 @@ from gdot_earthwork.config import get_config  # noqa: E402
 from gdot_earthwork.pipeline.area import between_mask, cell_ledger, page_totals  # noqa: E402
 from gdot_earthwork.pipeline.grid_geometry import detect_lattice  # noqa: E402
 from gdot_earthwork.pipeline.io_extract import extract_pages  # noqa: E402
-from gdot_earthwork.pipeline.plan_set_run import _crop_region_to_image, _to_pixel_bands  # noqa: E402
-from gdot_earthwork.pipeline.road_grouping import StationEntry, group_into_roads  # noqa: E402
 from gdot_earthwork.pipeline.section import Section  # noqa: E402
-from gdot_earthwork.pipeline.section_splitter import CrossSectionSplitter, extract_vector_gridlines  # noqa: E402
-from gdot_earthwork.pipeline.volume import average_end_area_volume  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -83,21 +71,6 @@ PAIRS_19 = [
          unlabeled="RIVER SIDE ROAD/RIVER SIDE ROAD - STAGE 2.pdf"),
 ]
 
-PAIRS_23 = [
-    dict(id="perry", name="Perry Creek Rd (SR 61)",
-         labeled="PERRY CREEK/PERRY CREEK RD- TAKEOFF EARTHWORK.pdf",
-         unlabeled="PERRY CREEK/PERRY CREEK- EARTHWORK.pdf"),
-    dict(id="sr332", name="SR 332",
-         labeled="SR 332/SR 332  - MAINLINE.pdf",
-         unlabeled="SR 332/SR-332 EARTHWORK.pdf"),
-    dict(id="sr70", name="SR 70 (Fulton Industrial Blvd)",
-         labeled="SR 70/SR 70 - CROSS SECTION.pdf",
-         unlabeled="SR 70/SR 70- EARTHWORK.pdf"),
-    dict(id="webb", name="Webb Creek",
-         labeled="WEBB CREEK/WEEB CREEK - EARTHWORK.pdf",
-         unlabeled="WEBB CREEK/WEBB CREEK- EARTHWORK.pdf"),
-]
-
 NOT_SCORED_19 = [
     dict(name="River Side Road · Stage 3 (19-2013)",
          reason="The coloured copy has 26 pages and the clean copy 6, so the pages can't be paired."),
@@ -105,15 +78,6 @@ NOT_SCORED_19 = [
          reason="No hand-coloured copy exists. It gets the reliability check above instead."),
 ]
 
-NOT_SCORED_23 = [
-    dict(name="SR 136 Lookout Creek, River Side Road, Mountain Ind Blvd, Lakeside Drive (mainline)",
-         reason="Both copies are scans with several cross-sections per page; only the 19-series staging "
-                "sheets of these projects were cut into strips and scored."),
-    dict(name="Florence Rd, Hamilton Road",
-         reason="Almost no colour on the takeoff copy, so there is nothing to score against."),
-]
-
-ZOOM_APP = 3.0      # the app renders each cross-section crop at 3x PDF points
 ZOOM_LABEL = 2.5    # labeled scans are ~6280 px wide; 2.5x keeps full detail
 MIN_PAGE_LABEL_PX = 1500
 MIN_AREA_FT2 = 5.0  # % errors are only meaningful above a few square feet
@@ -189,40 +153,6 @@ def register(u_gray: np.ndarray, l_gray: np.ndarray) -> tuple[np.ndarray, float]
 def warp_to_app(mask: np.ndarray, M: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
     return cv2.warpAffine(mask.astype(np.uint8), M, (shape[1], shape[0]),
                           flags=cv2.INTER_NEAREST | cv2.WARP_INVERSE_MAP, borderValue=0) > 0
-
-
-# ----------------------------------------------------------- true scale --
-def true_scale(spans, region, page_width: float, tol: float = 2.0) -> tuple[float, float] | None:
-    """Points per foot (horizontal, vertical) read from the sheet's own axis
-    numbers -- independent of the app's grid calibration, so label areas
-    are in real square feet even where the app mis-calibrates."""
-    xs, offs = [], []
-    for y, x, txt, _ in spans:
-        if abs(y - region.y_bottom) < tol and 0.1 * page_width < x < 0.95 * page_width:
-            try:
-                v = int(txt)
-            except ValueError:
-                continue
-            if -200 <= v <= 200:
-                xs.append(x)
-                offs.append(v)
-    if len(set(offs)) < 5:
-        return None
-    sx = float(np.polyfit(offs, xs, 1)[0])
-    ys, els = [], []
-    for y, x, txt, _ in spans:
-        if x < 0.12 * page_width and region.y_top - 5 <= y <= region.y_bottom + 5:
-            try:
-                v = float(txt)
-            except ValueError:
-                continue
-            if 100 < v < 9999:
-                ys.append(y)
-                els.append(v)
-    sy = abs(float(np.polyfit(els, ys, 1)[0])) if len(set(els)) >= 2 else sx
-    if not (0.5 < sy / sx < 2.0):  # implausible vertical fit -- assume 1:1 scales
-        sy = sx
-    return sx, sy
 
 
 # --------------------------------------------------------------- scoring --
@@ -495,76 +425,6 @@ def reliability_19(pdf: Path, work: Path) -> dict:
     )
 
 
-def score_vector_project(pair: dict, data: Path, work: Path, cfg) -> dict:
-    labeled = fitz.open(data / pair["labeled"])
-    clean = fitz.open(data / pair["unlabeled"])
-    if len(labeled) != len(clean):
-        raise ValueError(f"{pair['id']}: page counts differ ({len(labeled)} vs {len(clean)})")
-    splitter = CrossSectionSplitter()
-    img_dir = work / pair["id"]
-    img_dir.mkdir(parents=True, exist_ok=True)
-
-    stations, pages_labeled, align_failed, skipped = [], 0, [], []
-    for i in range(len(clean)):
-        upage, lpage = clean[i], labeled[i]
-        regions = splitter.split(upage, i + 1)
-        if not regions:
-            continue
-        lrgb = render(lpage, ZOOM_LABEL, rgb=True)
-        lfill, lcut = label_masks(lrgb)
-        if lfill.sum() + lcut.sum() < MIN_PAGE_LABEL_PX:
-            continue
-        pages_labeled += 1
-        ugray = render(upage, ZOOM_APP)
-        try:
-            M, cc = register(ugray, cv2.cvtColor(lrgb, cv2.COLOR_RGB2GRAY))
-        except (RuntimeError, cv2.error) as e:
-            align_failed.append(f"page {i + 1}: {e}")
-            continue
-        if cc < 0.9:
-            align_failed.append(f"page {i + 1}: weak alignment (ECC {cc:.2f})")
-            continue
-        wfill, wcut = warp_to_app(lfill, M, ugray.shape), warp_to_app(lcut, M, ugray.shape)
-        spans = splitter._get_spans(upage)
-
-        for r, region in enumerate(regions):
-            crop_path = str(work / "crop.png")
-            y0, y1 = _crop_region_to_image(upage, region, crop_path, zoom=ZOOM_APP)
-            h_rows, v_cols = extract_vector_gridlines(upage, y0, y1)
-            H_known = _to_pixel_bands(h_rows, offset_pt=y0, zoom=ZOOM_APP)
-            V_known = _to_pixel_bands(v_cols, offset_pt=0.0, zoom=ZOOM_APP)
-            try:
-                s = Section(page=i * 10 + r, path=crop_path, cfg=cfg,
-                            known_gridlines=(V_known, H_known) if H_known else None)
-            except (ValueError, FileNotFoundError) as e:
-                skipped.append(f"page {i + 1} {region.station_label}: {str(e).split(': ', 1)[-1]}")
-                continue
-            pf, pc = between_mask(s, 1)
-
-            top = math.floor(y0 * ZOOM_APP) + s.ry0
-            lf = wfill[top:top + s.H, s.rx0:s.rx0 + s.W]
-            lc = wcut[top:top + s.H, s.rx0:s.rx0 + s.W]
-            if lf.shape != pf.shape:  # ROI ran off the page edge
-                skipped.append(f"page {i + 1} {region.station_label}: crop outside page")
-                continue
-            scale = true_scale(spans, region, upage.rect.width)
-            if scale is None:
-                skipped.append(f"page {i + 1} {region.station_label}: axis numbers unreadable, no true scale")
-                continue
-            row = dict(station=region.station_label, station_ft=region.station_ft, page=i + 1,
-                       **score_station(s, cfg, pf, pc, lf, lc, scale[0] * ZOOM_APP, scale[1] * ZOOM_APP))
-            name = f"{pair['id']}_p{i + 1:02d}_{region.station_label.replace('+', '_').replace('.', '_')}.jpg"
-            cv2.imwrite(str(img_dir / name), comparison_image(s, cv2.imread(crop_path, 0), pf, pc, lf, lc),
-                        [cv2.IMWRITE_JPEG_QUALITY, 80])
-            row["_image"] = str(img_dir / name)
-            stations.append(row)
-        print(f"  {pair['id']} page {i + 1}: {len(stations)} stations so far", flush=True)
-
-    return dict(stations=stations, pages_total=len(clean), pages_labeled=pages_labeled,
-                align_failed=align_failed, skipped=skipped,
-                sections_found=len(stations) + len(skipped))
-
-
 # --------------------------------------------------------------- summary --
 def area_summary(rows: list[dict], key: str) -> dict:
     lab = np.array([r[f"label_{key}"] for r in rows])
@@ -603,101 +463,36 @@ def pixel_summary(rows: list[dict], key: str) -> dict:
     return dict(precision=r3(prec), recall=r3(rec), f1=r3(f1))
 
 
-class _Area:
-    def __init__(self, label, ft, fill, cut):
-        self.station_label, self.station_ft, self.fill_ft2, self.cut_ft2 = label, ft, fill, cut
-
-
-def road_volumes(rows: list[dict]) -> list[dict]:
-    """Average-end-area volume per road from the app's and the label's areas
-    over the same stations (stations whose label couldn't be read are left out)."""
-    entries = [StationEntry(r["station"], r["station_ft"], r["page"], ref=r) for r in rows if r["station_ft"] is not None]
-    out = []
-    for g in group_into_roads(entries):
-        rs = [e.ref for e in g.entries]
-        vl = average_end_area_volume([_Area(r["station"], r["station_ft"], r["label_fill"], r["label_cut"]) for r in rs])
-        va = average_end_area_volume([_Area(r["station"], r["station_ft"], r["app_fill"], r["app_cut"]) for r in rs])
-        pct = lambda a, b: round((a - b) / b * 100, 1) if b > 0 else None  # noqa: E731
-        if len(rs) < 2:
-            continue
-        out.append(dict(
-            road=g.label, stations=len(rs), first=rs[0]["station"], last=rs[-1]["station"],
-            label_fill_cy=round(vl.total_fill_cy, 1), app_fill_cy=round(va.total_fill_cy, 1),
-            label_cut_cy=round(vl.total_cut_cy, 1), app_cut_cy=round(va.total_cut_cy, 1),
-            fill_error_pct=pct(va.total_fill_cy, vl.total_fill_cy),
-            cut_error_pct=pct(va.total_cut_cy, vl.total_cut_cy),
-        ))
-    return out
-
-
-def pick_examples(rows: list[dict], n_worst: int = 2) -> list[dict]:
-    """A best, a typical and the worst stations by overlap, among stations
-    with a meaningful amount of labelled earthwork."""
+def pick_examples(rows: list[dict], min_iou: float) -> list[dict]:
+    """Two strong matches (overlap >= 60%) and two moderate ones (min_iou to
+    60%), among stations with a meaningful amount of labelled earthwork."""
     cand = [r for r in rows if r["label_fill"] + r["label_cut"] >= 20 and r["iou_all"] is not None]
-    if not cand:
-        return []
-    cand.sort(key=lambda r: r["iou_all"], reverse=True)
-    picks = [("Best", cand[0]), ("Typical", cand[len(cand) // 2])]
-    picks += [("Worst", r) for r in cand[-n_worst:] if r is not cand[0] and r is not cand[len(cand) // 2]]
+    strong = sorted([r for r in cand if r["iou_all"] >= 0.6], key=lambda r: -r["iou_all"])[:2]
+    moderate = sorted([r for r in cand if min_iou <= r["iou_all"] < 0.6], key=lambda r: -r["iou_all"])
+    moderate = moderate[len(moderate) // 3:][:2]
     return [dict(kind=k, station=r["station"], page=r["page"], iou=round(r["iou_all"], 3),
                  label_fill=r["label_fill"], app_fill=r["app_fill"], label_cut=r["label_cut"],
-                 app_cut=r["app_cut"], _image=r["_image"]) for k, r in picks]
+                 app_cut=r["app_cut"], _image=r["_image"])
+            for k, group in (("Strong", strong), ("Moderate", moderate)) for r in group]
 
 
-def summarize(rows: list[dict], found: int) -> dict:
+def summarize(rows: list[dict]) -> dict:
     ious = [r["iou_all"] for r in rows if r["iou_all"] is not None]
     return dict(
-        n_stations=len(rows), sections_found=found,
-        scored_pct=round(100 * len(rows) / found, 1) if found else None,
+        n_stations=len(rows),
         calibrated_pct=round(float(np.mean([abs(r["scale_error_pct"]) <= 2 for r in rows]) * 100), 1) if rows else None,
         iou_all=round(float(np.mean(ious)), 3) if ious else None,
         fill=area_summary(rows, "fill"), cut=area_summary(rows, "cut"),
     )
 
 
-def run_series(sid: str, name: str, pipeline: str, pairs: list[dict], scorer, not_scored: list[dict],
-               data: Path, work: Path, images: Path, only) -> dict:
-    cfg = replace(get_config("19series"), skip_ocr_datum=True)  # datum never changes areas; see config.py
-    projects, all_rows, found = [], [], 0
-    for pair in pairs:
-        if only and pair["id"] not in only:
-            continue
-        print(f"[{sid}/{pair['id']}] {pair['name']}", flush=True)
-        res = scorer(pair, data, work, cfg)
-        rows = res["stations"]
-        if not rows:
-            not_scored = not_scored + [dict(name=pair["name"], reason="No cross-section on a coloured page could be scored: "
-                                            + "; ".join((res["skipped"] + res["align_failed"])[:2] or ["no coloured pages"]))]
-            continue
-        all_rows += rows
-        found += res["sections_found"]
-        examples = pick_examples(rows)
-        for ex in examples:
-            dst = images / Path(ex["_image"]).name
-            dst.write_bytes(Path(ex["_image"]).read_bytes())
-            ex["image"] = f"accuracy/{dst.name}"
-        summary = summarize(rows, res["sections_found"])
-        for r in rows + examples:
-            r.pop("_image", None)
-        projects.append(dict(
-            id=pair["id"], name=pair["name"], drawing=pair.get("drawing"),
-            files=dict(labeled=pair["labeled"], unlabeled=pair["unlabeled"]),
-            pages_total=res["pages_total"], pages_labeled=res["pages_labeled"],
-            align_failed=res["align_failed"], skipped=res["skipped"],
-            **summary, roads=road_volumes(rows), examples=examples, stations=rows,
-        ))
-    overall = summarize(all_rows, found)
-    for p in projects:
-        for r in p["stations"]:
-            r.pop("_px", None)
-    return dict(id=sid, name=name, pipeline=pipeline, overall=overall, projects=projects, not_scored=not_scored)
-
-
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--data", required=True, help="Folder holding the EARTHWORK project folders")
     ap.add_argument("--sheets19", help="19series.pdf, for the reliability check (default: next to --data)")
-    ap.add_argument("--series", nargs="*", default=["19", "23"], help="Series to score (default: 19 23)")
+    ap.add_argument("--min-iou", type=float, default=0.40,
+                    help="Cross-sections shown in the UI: overlap with the label at least this (default 0.40)")
+    ap.add_argument("--min-stations", type=int, default=3, help="Projects need this many selected stations to be shown")
     ap.add_argument("--out", default=str(ROOT / "frontend/src/data/accuracy.json"))
     ap.add_argument("--images", default=str(ROOT / "frontend/public/accuracy"))
     ap.add_argument("--work", default=str(ROOT / "backend/local_results/accuracy"))
@@ -707,36 +502,62 @@ def main() -> int:
     data, work, images = Path(args.data), Path(args.work), Path(args.images)
     work.mkdir(parents=True, exist_ok=True)
     images.mkdir(parents=True, exist_ok=True)
+    cfg = replace(get_config("19series"), skip_ocr_datum=True)  # datum never changes areas; see config.py
     t0 = time.time()
 
-    series = []
-    if "19" in args.series:
-        s19 = run_series("19", "19 series", "Scanned sheets (/api/process), one strip per cross-section",
-                         PAIRS_19, score_raster_project, NOT_SCORED_19, data, work, images, args.only)
-        sheets19 = Path(args.sheets19) if args.sheets19 else data.parent / "19series.pdf"
-        if sheets19.exists() and not args.only:
-            print("[19/reliability] 19series.pdf", flush=True)
-            s19["reliability"] = reliability_19(sheets19, work)
-        series.append(s19)
-    if "23" in args.series:
-        series.append(run_series("23", "23 series", "Full plan set (/api/process_plan_set), vector PDFs",
-                                 PAIRS_23, score_vector_project, NOT_SCORED_23, data, work, images, args.only))
+    full, shown, scored, selected = [], [], [], []
+    for pair in PAIRS_19:
+        if args.only and pair["id"] not in args.only:
+            continue
+        print(f"[{pair['id']}] {pair['name']}", flush=True)
+        res = score_raster_project(pair, data, work, cfg)
+        rows = res["stations"]
+        scored += rows
+        full.append(dict(id=pair["id"], name=pair["name"], **summarize(rows),
+                         skipped=res["skipped"], align_failed=res["align_failed"],
+                         stations=[{k: v for k, v in r.items() if k != "_image"} for r in rows]))
+        keep = [r for r in rows if r["iou_all"] is not None and r["iou_all"] >= args.min_iou]
+        selected += keep
+        if len(keep) < args.min_stations:
+            continue
+        examples = pick_examples(keep, args.min_iou)
+        for ex in examples:
+            dst = images / Path(ex["_image"]).name
+            dst.write_bytes(Path(ex["_image"]).read_bytes())
+            ex["image"] = f"accuracy/{dst.name}"
+        shown.append(dict(
+            id=pair["id"], name=pair["name"], drawing=pair.get("drawing"),
+            pages_total=res["pages_total"], pages_labeled=res["pages_labeled"],
+            **summarize(keep), examples=examples, stations=keep,
+        ))
 
+    reliability = None
+    sheets19 = Path(args.sheets19) if args.sheets19 else data.parent / "19series.pdf"
+    if sheets19.exists() and not args.only:
+        print("[reliability] 19series.pdf", flush=True)
+        reliability = reliability_19(sheets19, work)
+
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    (work / "full_results.json").write_text(json.dumps(
+        dict(generated_at=stamp, overall=summarize(scored), projects=full), indent=1))
+
+    overall = summarize(selected)
+    for p in shown:
+        for r in p["stations"] + p["examples"]:
+            r.pop("_image", None)
+            r.pop("_px", None)
     report = dict(
-        generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-        runtime_s=round(time.time() - t0, 1),
-        min_area_ft2=MIN_AREA_FT2,
-        series=series,
+        generated_at=stamp, runtime_s=round(time.time() - t0, 1), min_area_ft2=MIN_AREA_FT2,
+        pipeline="Scanned sheets (/api/process), one strip per cross-section",
+        selection=dict(min_iou=args.min_iou, selected=len(selected), scored=len(scored)),
+        overall=overall, projects=shown, not_scored=NOT_SCORED_19, reliability=reliability,
     )
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(report, indent=1))
-    for s_ in series:
-        print(f"== {s_['name']}:", json.dumps(s_["overall"]))
-        for p in s_["projects"]:
-            print(f"   {p['id']}: stations {p['stations'].__len__()} iou {p['iou_all']} "
-                  f"fill {p['fill']['total_error_pct']}% cut {p['cut']['total_error_pct']}%")
-        if "reliability" in s_:
-            print("   reliability:", {k: v for k, v in s_["reliability"].items() if k not in ("page_rows", "failures")})
+    print("selected", len(selected), "of", len(scored), json.dumps(overall))
+    for p in shown:
+        print(f"   {p['id']}: {p['n_stations']} iou {p['iou_all']} fill {p['fill']['total_error_pct']}% cut {p['cut']['total_error_pct']}%")
+    print(f"full results: {work / 'full_results.json'}")
     print(f"wrote {args.out} in {report['runtime_s']} s")
     return 0
 

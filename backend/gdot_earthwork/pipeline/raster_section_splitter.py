@@ -1,6 +1,6 @@
 """
 Locates cross-section regions on a page of a SCANNED/raster PDF (no real
-text layer) -- the 23-series equivalent of section_splitter.py's
+text layer) -- the scanned-sheet equivalent of section_splitter.py's
 CrossSectionSplitter, which only works when real PDF text is present.
 
 Since there's no text to read station labels or axis calibration from,
@@ -19,7 +19,7 @@ Returns the SAME CrossSectionRegion shape section_splitter.py does, so it
 plugs into the same downstream orchestration (crop -> Section -> road
 grouping -> volume) without any other code needing to change.
 
-NOT YET VALIDATED against a real 23-series PDF -- only against a
+NOT YET VALIDATED against a real scanned plan set -- only against a
 synthetic page built to match the layout in the one real screenshot seen
 so far (3 stacked sections, station label at the right margin). Scan
 quality, exact label position, and label format can all vary in practice;
