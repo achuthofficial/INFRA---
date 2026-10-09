@@ -1279,3 +1279,8 @@
   .acc-stats, .acc-examples { padding-left: 16px; padding-right: 16px; }
   .acc-grid { grid-template-columns: 1fr; }
 }
+
+.series-tabs { margin-bottom: -18px; }
+.series-tabs .tab { padding: 10px 20px; font-size: 14px; }
+.acc-metrics td.acc-hint { white-space: normal; font-family: var(--font-body); font-size: 12.5px; min-width: 220px; }
+.acc-reliability .road-title { font-size: 22px; }
