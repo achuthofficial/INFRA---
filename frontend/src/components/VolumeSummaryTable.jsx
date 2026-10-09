@@ -1,3 +1,5 @@
+import { num, signed } from '../lib/format';
+
 function csvEscape(value) {
   const str = String(value);
   return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
@@ -41,50 +43,70 @@ export default function VolumeSummaryTable({ roads }) {
   const grandFill = roads.reduce((sum, r) => sum + r.total_fill_cy, 0);
   const grandCut = roads.reduce((sum, r) => sum + r.total_cut_cy, 0);
   const grandNet = grandFill - grandCut;
+  const maxMoved = Math.max(...roads.map((r) => r.total_fill_cy + r.total_cut_cy), 1);
 
   return (
-    <div className="summary-card">
-      <div className="summary-header">
-        <span className="stamp-label">VOLUME SUMMARY</span>
-        <button className="csv-button" onClick={() => downloadCSV(roads)}>
+    <section className="summary" aria-labelledby="summary-title">
+      <div className="section-head">
+        <div>
+          <p className="eyebrow">Schedule</p>
+          <h2 id="summary-title" className="section-title">Volume by road</h2>
+        </div>
+        <button className="btn-ghost" onClick={() => downloadCSV(roads)}>
+          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+            <path d="M7 1v8M3.5 5.5 7 9l3.5-3.5M1.5 12.5h11" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
           Download CSV
         </button>
       </div>
-      <table className="ledger-table summary-table">
-        <thead>
-          <tr>
-            <th style={{ textAlign: 'left' }}>Road</th>
-            <th>Stations</th>
-            <th>Fill (cy)</th>
-            <th>Cut (cy)</th>
-            <th>Net (cy)</th>
-          </tr>
-        </thead>
-        <tbody>
-          {roads.map((r) => (
-            <tr key={r.road_label}>
-              <td style={{ textAlign: 'left' }}>{r.road_label}</td>
-              <td>{r.stations.length}</td>
-              <td>{r.total_fill_cy.toFixed(1)}</td>
-              <td>{r.total_cut_cy.toFixed(1)}</td>
-              <td className={r.total_net_cy >= 0 ? 'readout-fill' : 'readout-cut'}>
-                {r.total_net_cy.toFixed(1)}
-              </td>
+      <div className="table-wrap table-wrap-flat">
+        <table className="data-table summary-table">
+          <thead>
+            <tr>
+              <th className="l">Road</th>
+              <th className="l bar-col">Fill / cut</th>
+              <th>Stations</th>
+              <th>Fill cy</th>
+              <th>Cut cy</th>
+              <th>Net cy</th>
             </tr>
-          ))}
-          <tr className="summary-total-row">
-            <td style={{ textAlign: 'left' }}>All roads</td>
-            <td></td>
-            <td>{grandFill.toFixed(1)}</td>
-            <td>{grandCut.toFixed(1)}</td>
-            <td className={grandNet >= 0 ? 'readout-fill' : 'readout-cut'}>{grandNet.toFixed(1)}</td>
-          </tr>
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {roads.map((r) => (
+              <tr key={r.road_label}>
+                <td className="l">
+                  <span className="cell-strong">{r.road_name && r.road_name !== 'unknown' ? r.road_name : r.road_label}</span>
+                  {r.road_name && r.road_name !== 'unknown' && <span className="cell-sub">{r.road_label}</span>}
+                </td>
+                <td className="l bar-col" aria-hidden="true">
+                  <span className="share">
+                    <i className="mini-fill" style={{ width: `${(r.total_fill_cy / maxMoved) * 100}%` }} />
+                    <i className="mini-cut" style={{ width: `${(r.total_cut_cy / maxMoved) * 100}%` }} />
+                  </span>
+                </td>
+                <td>{r.stations.length}</td>
+                <td className="t-fill">{num(r.total_fill_cy)}</td>
+                <td className="t-cut">{num(r.total_cut_cy)}</td>
+                <td>{signed(r.total_net_cy)}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td className="l">All roads</td>
+              <td className="bar-col" />
+              <td>{roads.reduce((n, r) => n + r.stations.length, 0)}</td>
+              <td className="t-fill">{num(grandFill)}</td>
+              <td className="t-cut">{num(grandCut)}</td>
+              <td>{signed(grandNet)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
       <p className="unit-caption">
-        Volumes in cubic yards (cy). CSV opens directly in Excel, or import it into an
-        existing Google Sheet via File &rarr; Import &rarr; Upload.
+        Average-end-area volumes in cubic yards, no shrink/swell applied. The CSV opens in Excel or
+        Google Sheets (File &rarr; Import).
       </p>
-    </div>
+    </section>
   );
 }

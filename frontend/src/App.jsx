@@ -1,25 +1,105 @@
 import { useEffect, useState } from 'react';
 import UploadPanel from './components/UploadPanel';
+import EmptyState from './components/EmptyState';
+import LoadingState from './components/LoadingState';
+import KpiBand from './components/KpiBand';
 import RoadCard from './components/RoadCard';
 import ResultCard from './components/ResultCard';
 import VolumeSummaryTable from './components/VolumeSummaryTable';
 import TickRule from './components/TickRule';
 import { checkHealth, fetchPresets, processPdf, processPlanSet } from './api';
+import { plural } from './lib/format';
 
-const EMPTY_TEXT = {
-  planSet: {
-    title: 'No plan set read yet',
-    body: "Upload a full plan set PDF. Cross-section pages are found automatically, split by station, grouped by road, and each road's fill/cut volume is computed here.",
-    loading: 'Scanning pages, tracing surfaces, computing volume…',
-    error: 'Could not read this plan set',
-  },
-  sheets: {
-    title: 'No sheets read yet',
-    body: 'Upload a scanned cross-section PDF and pick pages to see the coloured fill / cut overlay and per-cell quantities here.',
-    loading: 'Tracing ground and design surfaces…',
-    error: 'Could not read this sheet set',
-  },
-};
+const MODE_NAME = { planSet: 'Full plan set', sheets: 'Scanned sheets' };
+
+function PlanSetResults({ result }) {
+  const { roads, timing } = result;
+  const fill = roads.reduce((s, r) => s + r.total_fill_cy, 0);
+  const cut = roads.reduce((s, r) => s + r.total_cut_cy, 0);
+  const stations = roads.reduce((s, r) => s + r.stations.length, 0);
+
+  if (roads.length === 0) {
+    return (
+      <div className="notice">
+        <p className="notice-title">No cross-section sheets found</p>
+        <p>
+          Read {plural(result.pages_scanned, 'page')} in {timing.total_seconds.toFixed(1)} s, but none had station
+          labels and an offset axis readable from the PDF text. If this is a scanned drawing,
+          switch to <strong>Scanned sheets</strong>.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <KpiBand
+        fill={fill}
+        cut={cut}
+        unit="cy"
+        isVolume
+        meta={[
+          ['Pages scanned', result.pages_scanned.toLocaleString()],
+          ['Cross-section pages', result.cross_section_pages.toLocaleString()],
+          ['Roads', roads.length],
+          ['Stations', stations.toLocaleString()],
+          ['Run time', `${timing.total_seconds.toFixed(1)} s`],
+        ]}
+      />
+
+      {result.skipped_regions.length > 0 && (
+        <div className="callout callout-block" role="note">
+          <span className="callout-tag">{plural(result.skipped_regions.length, 'region')} skipped</span>
+          <div>{result.skipped_regions.map((s, i) => <p key={i}>{s}</p>)}</div>
+        </div>
+      )}
+
+      <VolumeSummaryTable roads={roads} />
+      <div className="section-head">
+        <div>
+          <p className="eyebrow">Corridors</p>
+          <h2 className="section-title">Roads in this plan set</h2>
+        </div>
+      </div>
+      <div className="results-list">
+        {roads.map((r, i) => <RoadCard key={r.road_label} road={r} index={i} />)}
+      </div>
+    </>
+  );
+}
+
+function SheetResults({ result }) {
+  const { pages } = result;
+  const fill = pages.reduce((s, p) => s + p.fill_ft2, 0);
+  const cut = pages.reduce((s, p) => s + p.cut_ft2, 0);
+  const warnings = pages.reduce((s, p) => s + p.warnings.length, 0);
+
+  return (
+    <>
+      <KpiBand
+        fill={fill}
+        cut={cut}
+        unit="ft²"
+        meta={[
+          ['Sheets', pages.length],
+          ['Grid cells', pages.reduce((s, p) => s + p.cells, 0).toLocaleString()],
+          ['Warnings', warnings],
+          ['Preset', result.preset],
+        ]}
+        note="Totals are summed end areas across the selected sheets, not a volume."
+      />
+      <div className="section-head">
+        <div>
+          <p className="eyebrow">Sheets</p>
+          <h2 className="section-title">Measured cross-sections</h2>
+        </div>
+      </div>
+      <div className="results-list">
+        {pages.map((r, i) => <ResultCard key={r.page} result={r} index={i} />)}
+      </div>
+    </>
+  );
+}
 
 export default function App() {
   const [mode, setMode] = useState('planSet');
@@ -28,36 +108,42 @@ export default function App() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [isRunning, setIsRunning] = useState(false);
+  const [fileName, setFileName] = useState(null);
 
   useEffect(() => {
     checkHealth().then((h) => setDepsOk(h.ok)).catch(() => setDepsOk(false));
     fetchPresets().then((p) => setPresets(p.presets)).catch(() => {});
   }, []);
 
+  function reset() {
+    setResult(null);
+    setError(null);
+  }
+
   function handleModeChange(next) {
     if (next === mode || isRunning) return;
     setMode(next);
-    setResult(null);
-    setError(null);
+    reset();
   }
 
   async function handleSubmit({ file, pages, preset }) {
     setIsRunning(true);
     setError(null);
+    setFileName(file.name);
     try {
       const body = mode === 'planSet'
         ? await processPlanSet({ file, preset })
         : await processPdf({ file, pages, preset });
       setResult(body);
     } catch (e) {
-      setError(e.message);
+      setError(e.message === 'Failed to fetch' ? 'Could not reach the server. Is the backend running on port 8811?' : e.message);
       setResult(null);
     } finally {
       setIsRunning(false);
     }
   }
 
-  const text = EMPTY_TEXT[mode];
+  const showResult = result && !isRunning;
 
   return (
     <div className="app-shell">
@@ -70,58 +156,42 @@ export default function App() {
         depsOk={depsOk}
       />
 
-      <main className="main-area">
-        <TickRule count={60} labelEvery={10} />
-
-        {!result && !isRunning && !error && (
-          <div className="empty-state">
-            <p className="empty-title">{text.title}</p>
-            <p className="empty-body">{text.body}</p>
-          </div>
-        )}
-
-        {isRunning && (
-          <div className="loading-state">
-            <div className="loading-sweep" />
-            <p>{text.loading}</p>
-          </div>
-        )}
-
-        {error && (
-          <div className="error-state">
-            <p className="error-title">{text.error}</p>
-            <p className="error-body">{error}</p>
-          </div>
-        )}
-
-        {result && !isRunning && mode === 'planSet' && (
-          <>
-            <p className="scan-summary">
-              Scanned {result.pages_scanned} page{result.pages_scanned === 1 ? '' : 's'} &middot;{' '}
-              {result.cross_section_pages} identified as cross-sections &middot;{' '}
-              {result.roads.length} road{result.roads.length === 1 ? '' : 's'} found &middot;{' '}
-              {result.timing.total_seconds.toFixed(1)}s total
-              ({result.timing.avg_seconds_per_region.toFixed(2)}s/region avg)
-            </p>
-            {result.skipped_regions.length > 0 && (
-              <div className="warning-strip" style={{ marginBottom: 20 }}>
-                {result.skipped_regions.map((s, i) => <p key={i}>{s}</p>)}
-              </div>
+      <main className="canvas">
+        <TickRule count={48} labelEvery={8} />
+        <header className="topbar">
+          <p className="crumbs">
+            <span>Workspace</span>
+            <span aria-hidden="true">/</span>
+            <span className="crumb-current">{MODE_NAME[mode]}</span>
+            {(showResult || isRunning) && fileName && (
+              <>
+                <span aria-hidden="true">/</span>
+                <span className="crumb-file" title={fileName}>{fileName}</span>
+              </>
             )}
-            <div style={{ marginBottom: 26 }}>
-              <VolumeSummaryTable roads={result.roads} />
-            </div>
-            <div className="results-list">
-              {result.roads.map((r, i) => <RoadCard key={r.road_label} road={r} index={i} />)}
-            </div>
-          </>
-        )}
+          </p>
+          {(showResult || error) && (
+            <button className="btn-ghost" onClick={reset}>New run</button>
+          )}
+        </header>
 
-        {result && !isRunning && mode === 'sheets' && (
-          <div className="results-list">
-            {result.pages.map((r, i) => <ResultCard key={r.page} result={r} index={i} />)}
-          </div>
-        )}
+        <div className="canvas-inner">
+          {!result && !isRunning && !error && <EmptyState mode={mode} />}
+
+          {isRunning && <LoadingState mode={mode} fileName={fileName} />}
+
+          {error && !isRunning && (
+            <section className="error" role="alert">
+              <p className="eyebrow eyebrow-cut">Run failed</p>
+              <h2 className="hero-title">That drawing couldn&apos;t be read.</h2>
+              <p className="error-detail">{error}</p>
+              <p className="hero-body">Check the input type matches the PDF (vector plan set vs. scanned sheets), and for scanned sheets that the page numbers exist.</p>
+            </section>
+          )}
+
+          {showResult && mode === 'planSet' && <PlanSetResults result={result} />}
+          {showResult && mode === 'sheets' && <SheetResults result={result} />}
+        </div>
       </main>
     </div>
   );
