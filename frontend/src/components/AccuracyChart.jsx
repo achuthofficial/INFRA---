@@ -23,7 +23,7 @@ export default function AccuracyChart({ stations }) {
       <div className="profile-readout" aria-live="polite">
         {active ? (
           <>
-            <span className="profile-sta">STA {active.station}</span>
+            <span className="profile-sta">STA {active.station}{active.station_fixed ? ' (label corrected)' : ''}</span>
             <span>page {active.page}</span>
             <span className="t-fill">fill {num(active.app_fill)} / {num(active.label_fill)} ft²</span>
             <span className="t-cut">cut {num(active.app_cut)} / {num(active.label_cut)} ft²</span>

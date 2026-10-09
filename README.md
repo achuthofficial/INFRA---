@@ -93,24 +93,30 @@ python scripts/check_pdf_content_type.py ../data/plan.pdf --page 96
 
 ## Accuracy against hand-labeled takeoffs
 
-`backend/scripts/evaluate_labels.py` scores the plan-set pipeline against the
-hand-coloured takeoffs (see *Labeled data* below) and the results are shown on
-the **Accuracy** page of the UI.
+`backend/scripts/evaluate_labels.py` scores the app against the hand-coloured
+takeoffs (see *Labeled data* below), separately for each GDOT sheet series, and
+the results are shown on the **Accuracy** page of the UI (switch between series
+at the top).
 
-For each project it runs the app's own plan-set code on the clean vector PDF,
-extracts the green (fill) / red (cut) colouring from the scanned takeoff,
-aligns the two pages automatically, and compares every cross-section:
-fill/cut area (ft², using the true scale read from the sheet's axis numbers),
-overlap (IoU), average-end-area volume per road, and whether the app read the
-sheet's scale correctly.
+| Series | Sheets | How the app reads them |
+|---|---|---|
+| **19 series** (19-xxxx) | Construction staging cross-sections: SR 136 Stage 1 & 2, Mountain Ind Blvd 19-0022 & 19-0005, River Side Road Stage 2 | Scanned pipeline (`/api/process`): each page is cut into one strip per cross-section (the layout of `19series.pdf`) |
+| **23 series** (23-xxxx) | Earthwork cross-sections: Perry Creek, SR 332, SR 70, Webb Creek | Plan-set pipeline (`/api/process_plan_set`) on the vector PDFs |
+
+For every cross-section it registers the coloured page onto the clean copy and
+reports area error (true scale from the sheet, not the app), pixel precision /
+recall / F1, IoU, bias, RMSE, correlation, average-end-area volume per road,
+and whether the app read the scale. `19series.pdf` has no labels, so it gets a
+reliability check instead (calibration, datum OCR, gap warnings per page).
 
 ```bash
 cd backend
-python scripts/evaluate_labels.py --data ../data/EARTHWORK
+python scripts/evaluate_labels.py --data ../data/EARTHWORK --sheets19 ../data/19series.pdf
+# one series only: add --series 19   (or --series 23)
 ```
 
-It writes `frontend/src/data/accuracy.json` and a few example comparison
-images to `frontend/public/accuracy/`; rebuild/reload the frontend to see them.
+It takes about 20 minutes and writes `frontend/src/data/accuracy.json` plus
+example comparison images in `frontend/public/accuracy/`.
 
 ## Input data
 
