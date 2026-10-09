@@ -106,7 +106,7 @@ export default function UploadPanel({ presets, mode, onModeChange, onSubmit, isR
           <p className="field-hint">
             {isPlanSet
               ? 'Cover sheets, notes and plan/profile pages are skipped on their own.'
-              : 'Scanned 19- or 23-series sheets, one cross-section per page.'}
+              : 'Scanned 19-series sheets, one cross-section per page.'}
           </p>
         </fieldset>
 

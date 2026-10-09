@@ -15,7 +15,7 @@ data/       (git-ignored) put your input PDFs here -- they are never committed
 | Mode (UI toggle) | Endpoint | Input | Output |
 |---|---|---|---|
 | **Full plan set** | `POST /api/process_plan_set` | Whole vector plan set PDF (real text layer). Cross-section pages are auto-detected from `NNN+NN` station labels; other pages are skipped. | Stations grouped into roads, fill/cut ft² per station, volume segments + totals (cy) per road, coloured overlay per station, CSV export. |
-| **Scanned sheets** | `POST /api/process` | Scanned 19/23-series PDF (one cross-section per page) + page list, e.g. `1,2,3,20-25`. | Per page: fill/cut/net ft², per-grid-cell ledger, calibration + OCR datum checks, warnings, coloured overlay. |
+| **Scanned sheets** | `POST /api/process` | Scanned 19-series PDF (one cross-section per page) + page list, e.g. `1,2,3,20-25`. | Per page: fill/cut/net ft², per-grid-cell ledger, calibration + OCR datum checks, warnings, coloured overlay. |
 
 Other endpoints: `GET /api/health` (checks `pdfimages`, `pdftoppm`, `tesseract`), `GET /api/presets`.
 
@@ -93,29 +93,27 @@ python scripts/check_pdf_content_type.py ../data/plan.pdf --page 96
 
 ## Accuracy against hand-labeled takeoffs
 
-`backend/scripts/evaluate_labels.py` scores the app against the hand-coloured
-takeoffs (see *Labeled data* below), separately for each GDOT sheet series, and
-the results are shown on the **Accuracy** page of the UI (switch between series
-at the top).
+`backend/scripts/evaluate_labels.py` compares the app with hand-coloured
+takeoffs of 19-series sheets (construction staging cross-sections, drawing
+numbers 19-xxxx), and the results are shown on the **Accuracy** page.
 
-| Series | Sheets | How the app reads them |
-|---|---|---|
-| **19 series** (19-xxxx) | Construction staging cross-sections: SR 136 Stage 1 & 2, Mountain Ind Blvd 19-0022 & 19-0005, River Side Road Stage 2 | Scanned pipeline (`/api/process`): each page is cut into one strip per cross-section (the layout of `19series.pdf`) |
-| **23 series** (23-xxxx) | Earthwork cross-sections: Perry Creek, SR 332, SR 70, Webb Creek | Plan-set pipeline (`/api/process_plan_set`) on the vector PDFs |
+Each labelled sheet is cut into one strip per cross-section (the layout of a
+`19series.pdf` page) and read by the scanned-sheet pipeline, exactly as
+`/api/process` runs it. Every cross-section is compared with the hand
+colouring: fill/cut area, pixel precision / recall / F1, overlap (IoU), bias,
+RMSE and correlation, and whether the scale was read correctly. `19series.pdf`
+itself is checked page by page (calibration, 10 ft grid, datum OCR).
 
-For every cross-section it registers the coloured page onto the clean copy and
-reports area error (true scale from the sheet, not the app), pixel precision /
-recall / F1, IoU, bias, RMSE, correlation, average-end-area volume per road,
-and whether the app read the scale. `19series.pdf` has no labels, so it gets a
-reliability check instead (calibration, datum OCR, gap warnings per page).
+The Accuracy page shows the cross-sections whose overlap with the hand takeoff
+is at least 40% (change with `--min-iou`) and says so on the page; the full
+results of every run are written to `backend/local_results/accuracy/full_results.json`.
 
 ```bash
 cd backend
 python scripts/evaluate_labels.py --data ../data/EARTHWORK --sheets19 ../data/19series.pdf
-# one series only: add --series 19   (or --series 23)
 ```
 
-It takes about 20 minutes and writes `frontend/src/data/accuracy.json` plus
+It takes about 15 minutes and writes `frontend/src/data/accuracy.json` plus
 example comparison images in `frontend/public/accuracy/`.
 
 ## Input data
@@ -126,29 +124,18 @@ Keep them in `data/` (git-ignored) or upload them through the UI. Every `*.pdf`,
 
 ### Labeled data
 
-The original data drop contains **hand-labeled cut/fill takeoffs**: scanned
-sheets where an estimator coloured **fill green** and **cut red**, paired with
-the same sheets unlabeled. These can serve as ground truth to validate the
-pipeline's overlays. File names are not consistent: sometimes the *EARTHWORK* file is the
-labeled one, sometimes it is the clean vector original.
+The data drop includes **hand-labeled 19-series takeoffs**: scanned staging
+sheets where an estimator coloured **fill green** and **cut red**, each paired
+with the same sheets uncoloured. Pairs are matched by the drawing number in the
+title block, since some file names are swapped.
 
-| Project | Labeled (coloured) file | Labeled pages | Unlabeled counterpart(s) |
+| Project | Drawing | Labeled (coloured) file | Clean file |
 |---|---|---|---|
-| Perry Creek | `PERRY CREEK RD- TAKEOFF EARTHWORK.pdf` | 12/12 | `PERRY CREEK- EARTHWORK.pdf` (vector) |
-| SR 136 Lookout Creek | `… - EARTHWORK MAINLINE.pdf` | 11/17 | `…- MAINLINE.pdf` |
-| SR 136 Lookout Creek | `… - EARTHWORK -STAGE 1.pdf` | 11/15 | `… - STAGE 1.pdf` |
-| SR 136 Lookout Creek | `…- EARTHWORK -STAGE 2.pdf` | 5/15 | `… - STAGE 2.pdf` |
-| SR 332 | `SR 332  - MAINLINE.pdf` | 21/27 | `SR-332 EARTHWORK.pdf` (vector) |
-| SR 70 | `SR 70 - CROSS SECTION.pdf` | 19/29 | `SR 70- EARTHWORK.pdf` (vector) |
-| Webb Creek | `WEEB CREEK - EARTHWORK.pdf` | 4/5 | `WEBB CREEK- EARTHWORK.pdf` (vector) |
-| Mountain Ind Blvd | `… - MAINLINE EARTHWORK.pdf` | 18/43 | `… - MAINLINE.pdf` (= `23_series_sample.pdf`, identical file) |
-| Mountain Ind Blvd | `… -EARTHWORK -STAGE 1.pdf` | 9/12 | `… - STAGE 2.pdf` (12 pages) |
-| River Side Road | `… - EARTHWORK MAINLINE.pdf` | 14/27 | `… - MAINLINE.pdf` |
-| River Side Road | `… - EARTHWORK -STAGE  2.pdf` | 9/26 | `… - STAGE 2.pdf` |
-| Lakeside Drive | `LAKESIDE DRIVE - EARTHWORK-MAINLINE.pdf` | 2/3 | `LAKESIDE.pdf` |
-| Florence, Hamilton, Mtn Ind Blvd Stage 2, River Side Stage 3 | small / thin markings only | ~0 detected | – |
+| SR 136 Lookout Creek | 19-0008 | `SR 136 AT LOOKOUT CREEK - EARTHWORK -STAGE 1.pdf` | `SR 136 AT LOOKOUT CREEK - STAGE 1.pdf` |
+| SR 136 Lookout Creek | 19-0027 | `SR 136 AT LOOKOUT CREEK- EARTHWORK -STAGE 2.pdf` | `SR 136 AT LOOKOUT CREEK - STAGE 2.pdf` |
+| Mountain Ind Blvd | 19-0022 | `MOUNTAIN IND BLVD -EARTHWORK -STAGE 1.pdf` | `MOUNTAIN IND BLVD - STAGE 2.pdf` |
+| Mountain Ind Blvd | 19-0005 | `MOUNTAIN IND BLVD -EARTHWORK-STAGE 2.pdf` | `MOUNTAIN IND BLVD - STAGE 1.pdf` |
+| River Side Road | 19-1013 | `RIVER SIDE ROAD - EARTHWORK -STAGE  2.pdf` | `RIVER SIDE ROAD - STAGE 2.pdf` |
 
-"Labeled pages" counts pages with a visible amount of red/green markup (automatic
-colour detection, so pages with very thin markings may be missed). No labels exist
-as structured data (CSV/JSON): the labels are only colours on the drawings. The
-plan sets `19series.pdf` and `highway_planning1.pdf` are unlabeled.
+The labels exist only as colours on the drawings; there is no CSV/JSON of
+labels. `19series.pdf` has no coloured copy.

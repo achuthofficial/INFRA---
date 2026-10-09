@@ -14,7 +14,7 @@ const COPY = {
   sheets: {
     eyebrow: 'Scanned sheets',
     title: <>Pick the sheets. <em>See every square foot.</em></>,
-    body: 'For scanned 19- and 23-series cross-sections. Each page is calibrated from its own grid and elevation labels, then measured cell by cell.',
+    body: 'For scanned 19-series cross-sections. Each page is calibrated from its own grid and elevation labels, then measured cell by cell.',
     steps: [
       ['Calibrate', 'Reads the grid pitch and OCRs the elevation gutter for the datum.'],
       ['Trace', 'Separates dashed ground from the solid template and traces both.'],
