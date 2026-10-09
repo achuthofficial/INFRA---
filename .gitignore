@@ -1,5 +1,5 @@
 # Input data stays local -- PDFs are uploaded through the UI or read from data/
-data/
+/data/
 *.pdf
 *.zip
 
